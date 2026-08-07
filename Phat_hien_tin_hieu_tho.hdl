@@ -1,0 +1,135 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+
+entity axis_squelch_gate is
+    Generic (
+        DATA_WIDTH   : integer := 32;
+        THRESH_SHIFT : integer := 5;
+        HOLD_TIME    : integer := 7000;
+        WARMUP_TIME  : integer := 96000 
+    );
+    Port (
+        aclk          : in  std_logic;
+        aresetn       : in  std_logic;
+        s_axis_tdata  : in  std_logic_vector(DATA_WIDTH-1 downto 0);
+        s_axis_tvalid : in  std_logic;
+        m_axis_tdata  : out std_logic_vector(DATA_WIDTH-1 downto 0);
+        m_axis_tvalid : out std_logic;
+        end_frame     : out std_logic
+        
+        -- =========================================================
+        -- CÁC C?NG OUTPUT M?I ?? LÔI BI?N RA NGOÀI DEBUG
+        -- =========================================================
+--        dbg_abs_data_out    : out std_logic_vector(31 downto 0);
+--        dbg_threshold_out   : out std_logic_vector(31 downto 0);
+--        dbg_noise_floor_out : out std_logic_vector(31 downto 0)
+    );
+end axis_squelch_gate;
+
+architecture rtl of axis_squelch_gate is
+
+    signal noise_floor : unsigned(31 downto 0) := to_unsigned(10, 32); 
+    signal hold_cnt    : integer range 0 to HOLD_TIME := 0;
+    signal gate_open   : std_logic := '0';
+    signal warmup_cnt  : integer range 0 to WARMUP_TIME := 0;
+    
+    constant MIN_NOISE : unsigned(31 downto 0) := to_unsigned(50, 32);
+
+begin
+
+    process(aclk)
+        variable v_abs_data    : unsigned(31 downto 0);
+        variable v_threshold   : unsigned(31 downto 0);
+        variable v_gate_open   : std_logic;
+    begin
+        if rising_edge(aclk) then
+            if aresetn = '0' then
+                noise_floor   <= to_unsigned(10, 32);
+                hold_cnt      <= 0;
+                gate_open     <= '0';
+                warmup_cnt    <= 0; 
+                m_axis_tdata  <= (others => '0');
+                m_axis_tvalid <= '0';
+                
+                -- Reset các c?ng Output Debug
+--                dbg_abs_data_out    <= (others => '0');
+--                dbg_threshold_out   <= (others => '0');
+--                dbg_noise_floor_out <= std_logic_vector(to_unsigned(10, 32));
+            else
+                if s_axis_tvalid = '1' then
+                    
+                    if warmup_cnt < WARMUP_TIME then
+                        warmup_cnt    <= warmup_cnt + 1;
+                        m_axis_tvalid <= '1';
+                        m_axis_tdata  <= (others => '0'); 
+                        v_gate_open   := '0';
+                        gate_open     <= '0';
+                        noise_floor   <= to_unsigned(10, 32); 
+                        
+                        -- Gán giá tr? r?ng cho bi?n trong lúc warmup ?? tránh l?i ch?t (latch)
+                        v_abs_data    := (others => '0');
+                        v_threshold   := (others => '0');
+                    else
+                        
+                        -- L?y tr? tuy?t ??i
+                        if signed(s_axis_tdata) < 0 then
+                            v_abs_data := unsigned(-signed(s_axis_tdata));
+                        else
+                            v_abs_data := unsigned(s_axis_tdata);
+                        end if;
+
+                        -- Tính Ng??ng
+                        v_threshold := shift_left(noise_floor, THRESH_SHIFT);
+                        v_gate_open := gate_open;
+
+                        -- LOGIC M? C?NG 
+                        if v_abs_data > v_threshold then
+                            hold_cnt    <= HOLD_TIME;
+                            v_gate_open := '1';       
+                            gate_open   <= '1';       
+                        else
+                            if hold_cnt > 0 then
+                                hold_cnt    <= hold_cnt - 1;
+                                v_gate_open := '1';   
+                                gate_open   <= '1';
+                            else
+                                v_gate_open := '0';   
+                                gate_open   <= '0';
+                                
+                                -- H?C NHI?U 
+                                noise_floor <= noise_floor - shift_right(noise_floor, 10) + shift_right(v_abs_data, 10);
+                                
+                                -- Ch?n ?áy
+                                if (noise_floor - shift_right(noise_floor, 10) + shift_right(v_abs_data, 10)) < MIN_NOISE then
+                                    noise_floor <= MIN_NOISE;
+                                end if;
+                            end if;
+                        end if;
+
+                        -- ??Y D? LI?U RA
+                        m_axis_tvalid <= '1';
+                        if v_gate_open = '1' then
+                            m_axis_tdata <= s_axis_tdata;     
+                        else
+                            m_axis_tdata <= (others => '0');  
+                        end if;
+                        
+                    end if; -- End else c?a WARMUP
+                    
+                    -- =========================================================
+                    -- CH?T H?: B?N BI?N RA NGOÀI (Ép ki?u v? std_logic_vector)
+                    -- =========================================================
+--                    dbg_abs_data_out    <= std_logic_vector(v_abs_data);
+--                    dbg_threshold_out   <= std_logic_vector(v_threshold);
+--                    dbg_noise_floor_out <= std_logic_vector(noise_floor);
+                    
+                else
+                    m_axis_tvalid <= '0';
+                end if;
+            end if;
+        end if;
+    end process;
+    
+    end_frame <= gate_open;
+end rtl;
