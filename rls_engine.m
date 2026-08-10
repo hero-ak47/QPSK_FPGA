@@ -10,3 +10,11 @@ function [nfData,newWeight,newInvConv] = rls_engine(fData,refData,oldWeight,oldI
     nfData = fData.*oldWeight;
 end
 
+% fData                   : tin heu thu duoc
+% refData                 : tin hieu tham chieu (biet truoc)
+% oldWeight               : he so hien tai
+% oldInvConv              : do tin cay hien tai
+% newWeight (CalibWeight) : he so moi can tinh
+
+%%  => uoc luong kenh : fData = fData .* CalibWeight
+
