@@ -12,6 +12,7 @@ end
 
 % fData                   : tin heu thu duoc
 % refData                 : tin hieu tham chieu (biet truoc)
+% lambda                  : hệ số nhớ
 % oldWeight               : he so hien tai
 % oldInvConv              : do tin cay hien tai
 % newWeight (CalibWeight) : he so moi can tinh
