@@ -36,6 +36,13 @@ disp('Đã nạp tín hiệu từ tx_signal_1.wav');
 % Khu offset
 y = y - mean(y);
 
+rayleighChan = comm.RayleighChannel( ...
+    'SampleRate', 96000, ...
+    'PathDelays', [0 0.001 0.002], ...
+    'AveragePathGains', [0 -3 -5], ...
+    'MaximumDopplerShift', 2);
+y = rayleighChan(y);
+
 % mo phong kenh truyen : CFO + Fadding +AWGN
 CFO_true = 4;  SNR_dB = -1;
 h_ch_audio = [1; -2 + 1; 9 + 1j];
