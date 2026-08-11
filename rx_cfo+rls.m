@@ -1,18 +1,25 @@
+
+clc; clear; close all
 %% SECTION 1: BẮT ĐẦU THU TÍN HIỆU
 % disp('Đang ghi âm... Hãy phát tín hiệu ở máy kia.');
 % r = audiorecorder(48000, 24, 1);
 % record(r);
-clc; clear; close all
+
 %% SECTION 2: DỪNG THU VÀ XỬ LÝ TÍN HIỆU
 % stop(r);
 % disp('Đã dừng ghi âm. Đang xử lý tín hiệu...');
 %y = getaudiodata(r, 'double');
 clc; clear; close all;
 % 1. THÔNG SỐ VÀ TÁI TẠO PREAMBLE LÀM CHUẨN MẪU
-Fs = 48000; Fc = 10000; Rs = 500; L = Fs/Rs;
+Fs = 48000; Fc = 10000; 
+Rs = 500;   % bit rate
+L = Fs/Rs;  % numbers of sample in 1s
+
+% RRC
 beta = 0.5; span = 6;
 h_rrc = rcosdesign(beta, span, L, 'sqrt');
 
+% Zadoff-Chu
 Nzc = 63;
 u   = 25;
 Lsym = Nzc * L;              % Số mẫu của MỘT khối preamble ZC sau pulse shaping
@@ -26,8 +33,10 @@ if Fs_read ~= Fs
 end
 disp('Đã nạp tín hiệu từ tx_signal_1.wav');
 
+% Khu offset
 y = y - mean(y);
 
+% mo phong kenh truyen : CFO + Fadding +AWGN
 CFO_true = 4;  SNR_dB = -1;
 h_ch_audio = [1; -2 + 1; 9 + 1j];
 y = conv(y, h_ch_audio);
@@ -35,7 +44,7 @@ y = y .* exp(1j*2*pi*CFO_true*(0:length(y)-1)'/Fs);
 y = my_awgn(y, SNR_dB);
 plot(y);
 
-% Tái tạo lại chính xác chuỗi Preamble ở máy thu để cross-correlation
+% preable laf ZC de dong bo
 preamble_sym_rx = pss;
 preamble_bb_ideal = upfirdn(preamble_sym_rx, h_rrc, L);
 
@@ -61,58 +70,67 @@ if peak_val/noise_floor < 5
     warning('Peak/Noise thấp -> có thể sync SAI vị trí!');
 end
 
-Nguard = 14;
-Npayload = 500;
+Nguard   = 14;    % khoảng lặng 
+Npayload = 500;   % pilot + data + pilot + data + ....
 skip = Nzc + Nguard;              % = 77
-total_sym_len = skip + Npayload;  % = 577
+total_sym_len = skip + Npayload;  % = 577  --độ dài toàn bộ bản tin: preamble + guard + pilot + data + pilot + data + ....
 
 if start_sample < 1 || (start_sample + total_sym_len*L) > length(y_mf)
     error('Không tìm thấy khung tín hiệu nguyên vẹn. Hãy thử thu phát lại!');
 end
 
-% 4. TRÍCH XUẤT SYMBOL (DOWNSAMPLING)
+% 4. TRÍCH XUẤT SYMBOL (DOWNSAMPLING) -- lấy mẫu đại diện cho các symbol IQ
 rx_symbols = zeros(total_sym_len, 1);
-first_sym_offset = (span*L/2) + 1;
+
+first_sym_offset = (span*L/2) + 1;  % lấy mẫu ở chính giữa symbol
+
 for k = 1:total_sym_len
     idx = start_sample + first_sym_offset + (k-1)*L - 1;
     rx_symbols(k) = y_mf(idx);
 end
 
-rx_payload = rx_symbols(skip+1:end); % Bỏ qua preamble + guard
+rx_payload = rx_symbols(skip+1:end); % Bỏ qua preamble + guard  -> thu được các symbol pilot + data
 
 % ---- Vị trí pilot & chuỗi pilot ZC (khai báo TRƯỚC để dùng cho cả CFO và RLS) ----
 pilot_indices = 1:5:500;             % 100 vị trí pilot
-data_indices  = setdiff(1:500, pilot_indices);
+data_indices  = setdiff(1:500, pilot_indices); % hàm setdiff trả về hiệu của 2 tập hợp -> index của data là các số còn lại từ 1 -> 500
 
 N_pilots = length(pilot_indices);    % = 100 pilot symbols
 u_p = 7;
 n_p = (0:N_pilots-1).';
 zc_pilots = sqrt(2) * exp(-1j * pi * u_p * n_p .* (n_p + 1) / N_pilots);
 
-%----------------------------------------------------------------
+%-------------------------------------------------------------------------------------------------------------------------------
 % 5. ƯỚC LƯỢNG & BÙ CFO BẰNG LEAST-SQUARES TRÊN PHA PILOT ZC
-%----------------------------------------------------------------
+%-------------------------------------------------------------------------------------------------------------------------------
 rx_pilots_raw = rx_payload(pilot_indices);
 
-% So pha pilot thu được với pilot ZC lý tưởng tương ứng (KHÔNG dùng 1+1j
-% vì pilot ở đây là chuỗi Zadoff-Chu, mỗi vị trí có pha riêng)
+% So pha pilot thu được với pilot ZC lý tưởng tương ứng 
+% vì pilot là chuỗi Zadoff-Chu, mỗi vị trí có pha riêng
+
 pilot_phase_raw = angle(rx_pilots_raw ./ zc_pilots);
 
 fprintf('\n--- DEBUG: PILOT PHASE (TRƯỚC UNWRAP) ---\n');
 disp(pilot_phase_raw(1:min(10,end)).');
 
+% hàm angle chỉ trả về pha từ [-pi:pi] -> dùng hàm unwrap để bù k2pi -> mảng lưu pha các mẫu IQ sẽ tăng mượt nếu ảnh hưởng bời CFO
 pilot_phase_unwrapped = unwrap(pilot_phase_raw);
 
 % idx_col: vị trí symbol (0-based) của từng pilot TRONG PAYLOAD, dùng làm
 % biến "thời gian" cho phép fit tuyến tính pha theo symbol index
+
+% ma tran thiet ke A = [1 n] vs phi_CFO = A.[a b]
 idx_col = pilot_indices(:) - 1;
 A = [ones(length(idx_col),1), idx_col];
+
+% tinh nghiem toi uu theo LS : phi = (A^T.A)^-1.A^T. phi_unwrap
 coeffs = A \ pilot_phase_unwrapped;
 slope  = coeffs(2);
 
 Tsym = L / Fs;
 cfo_est = slope / (2*pi*Tsym);
 
+%------------------ debug----------------------
 fprintf('\n--- DEBUG: CFO ESTIMATION ---\n');
 fprintf('slope (rad/symbol) = %.6f\n', slope);
 fprintf('CFO ước lượng      = %.4f Hz (CFO thật = %.4f Hz)\n', cfo_est, CFO_true);
@@ -120,11 +138,14 @@ fprintf('CFO ước lượng      = %.4f Hz (CFO thật = %.4f Hz)\n', cfo_est, 
 phase_fit = A * coeffs;
 residual = pilot_phase_unwrapped - phase_fit;
 fprintf('RMS residual sau LS fit = %.6f rad\n', sqrt(mean(residual.^2)));
+%---------------------------------------------------
 
 % ---- Bù CFO cho toàn bộ 500 symbol payload ----
 n_idx = (0:499).';
 cfo_correction = exp(-1j * 2*pi * cfo_est * Tsym * n_idx);
 rx_payload_cfo = rx_payload .* cfo_correction;
+%---------------------------------------------------
+
 figure;
 scatter(real(rx_payload_cfo), imag(rx_payload_cfo), 'b.'); hold on;
 scatter([1 -1 1 -1], [1 1 -1 -1], 'rx', 'LineWidth', 2);
@@ -135,9 +156,10 @@ grid on; axis square;
 %----------------------------------------------------------------
 % 6. CÂN BẰNG KÊNH BẰNG RLS (DÙNG PILOT ZC) - CHẠY TRÊN rx_payload_cfo
 %----------------------------------------------------------------
-lambda = 0.1;       % Hệ số quên (giai đoạn warm-up)
-P      = 100;
-W      = 1 + 0j;
+lambda = 0.1;       % Hệ số quên (giai đoạn warm-up) (lMBDA CANG lon thi cang nho lau)
+P      = 100;       % 
+W      = 1 + 0*1j;  % trọng số cân bằng ban đầu
+
 rx_payload_eq = zeros(500, 1);
 W_track       = zeros(500, 1);
 
@@ -160,15 +182,16 @@ lambda = 0.9;        % Hệ số quên chính thức cho vòng lặp chính
 pilot_cnt = 0;
 
 for i = 1:500
-    y_k = rx_payload_cfo(i);   % <-- dùng tín hiệu ĐÃ BÙ CFO
+    y_k = rx_payload_cfo(i);   % <--  tín hiệu ĐÃ BÙ CFO
 
     % 1. Lấy dữ liệu tham chiếu (Reference)
-    if ismember(i, pilot_indices)
+    if ismember(i, pilot_indices)   % nếu đâng xét đến symbl pilot
         pilot_cnt = pilot_cnt + 1;
-        d_k = zc_pilots(pilot_cnt);
-    else
-        eq_temp = W * y_k;
-        d_k = sign(real(eq_temp)) + 1j * sign(imag(eq_temp));
+        d_k = zc_pilots(pilot_cnt); % d_k là pilot tham chiếu (đã biết) cho symbol tiếp theo
+
+    else                            % nếu đang xét đến symbol data
+        eq_temp = W * y_k;          % cập nhật RLS cho symbol data
+        d_k = sign(real(eq_temp)) + 1j * sign(imag(eq_temp)); % lại thành symbol tham chiếu (dự đoán)
     end
 
     % 2. Cân bằng tín hiệu nhận được, lưu vào mảng kết quả
@@ -176,12 +199,16 @@ for i = 1:500
 
     % 3. Cập nhật RLS cho symbol tiếp theo
     y_mag_sq = real(y_k)^2 + imag(y_k)^2;
+     % độ lợi kalman : quyết định tin sai số e đến mức nào
     k = (P * conj(y_k)) / (lambda + P * y_mag_sq);
+    % Sai số ước lượng
     e = d_k - rx_payload_eq(i);
+    % Cập nhật trọng số RLS mới
     W = W + k * e;
+    % Cập nhật P: P càng lớn, thuật toán càng tự tin cập nhật mạnh -> hội tụ nhanh nhưng dễ dao dộng
     P = (P - k * y_k * P) / lambda;
 
-    W_track(i) = W;
+    W_track(i) = W;  % lưu lại các trọng số để plot
 end
 
 rx_data_eq = rx_payload_eq(data_indices);
