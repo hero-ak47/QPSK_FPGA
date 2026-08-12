@@ -40,7 +40,7 @@ disp('Đã nạp tín hiệu từ tx_signal_1.wav');
 % Khu offset
 y = y - mean(y);
 
-a_true = 0.0004;   % giả lập Doppler wideband thật (a = v/c)
+a_true = 0.0003;   % giả lập Doppler wideband thật (a = v/c)
 t_orig = (0:length(y)-1)'/Fs;
 t_warp = t_orig*(1+a_true);
 y = interp1(t_orig, y, t_warp, 'spline', 2);
@@ -48,8 +48,8 @@ y = interp1(t_orig, y, t_warp, 'spline', 2);
 rayleighChan = comm.RayleighChannel( ...
     'SampleRate', 48000, ...
     'PathDelays', [0 0.0001 0.0002], ...
-    'AveragePathGains', [0 -9 -10], ...
-    'MaximumDopplerShift', 1);
+    'AveragePathGains', [0 -5 -10], ...
+    'MaximumDopplerShift', 0.5);
 y = rayleighChan(y);
 
 % mo phong kenh truyen : CFO 
@@ -168,9 +168,9 @@ if start_sample < 1 || (start_sample + (Nzc+N_guard+N_payload)*L) > length(y_mf)
     error('Không tìm thấy khung tín hiệu nguyên vẹn sau khi bù Doppler!');
 end
 
-% ---- TỪ ĐÂY MỚI CHẠY Section 4 (trích xuất symbol) ----
+
 % 4. TRÍCH XUẤT SYMBOL (DOWNSAMPLING) -- lấy mẫu đại diện cho các symbol IQ
-total_sym_len = 500;
+total_sym_len = 577 + 63;
 skip = 77;
 rx_symbols = zeros(total_sym_len, 1);
 
@@ -271,7 +271,7 @@ for it = 1:50
 end
 
 % ---- RLS liên tục qua toàn bộ payload đã bù CFO (Decision-Directed + ZC Pilot) ----
-lambda = 0.7;        % Hệ số quên chính thức cho vòng lặp chính
+lambda = 0.9;        % Hệ số quên chính thức cho vòng lặp chính
 pilot_cnt = 0;
 
 for i = 1:500
@@ -366,13 +366,29 @@ grid on; axis square;
 
 
 
-%------------------------------------------------------------------
-% Hàm co giãn trục thời gian bằng nội suy (thay thế resample+rat)
-%------------------------------------------------------------------
-function y_out = doppler_resample(y, a_try, Fs)
+function y_out = doppler_resample(y, a_try, Fs, fc)
+    % y    : Tín hiệu đầu vào (Real hoặc Complex IQ)
+    % a_try: Hệ số Doppler (a = v/c)
+    % Fs   : Tần số lấy mẫu (Hz)
+    % fc   : Tần số sóng mang (Hz). Bỏ trống hoặc đặt = 0 nếu y là Passband.
+
+    if nargin < 4 || isempty(fc)
+        fc = 0; % Mặc định xem như tín hiệu passband hoặc đã hạ băng hoàn hảo
+    end
+
     N = length(y);
-    t_orig = (0:N-1)' / Fs;        % trục thời gian gốc
-    t_new  = t_orig * (1 + a_try); % trục thời gian đã bị Doppler kéo giãn/nén
-    % Nội suy tín hiệu tại các mốc thời gian mới về lưới thời gian gốc
-    y_out = interp1(t_orig, y, t_new, 'spline', 0);
+    t_orig = (0:N-1)' / Fs;        % Trục thời gian gốc
+
+    % 1. Đổi trục thời gian chính xác: t_new = t / (1 + a)
+    t_new = t_orig / (1 + a_try);
+
+    % 2. Nội suy và cho phép ngoại suy ('extrap') tránh bị tràn số 0 ở biên
+    y_resampled = interp1(t_orig, y, t_new, 'spline', 'extrap');
+
+    % 3. Bù xoay pha sóng mang (Carrier Phase Shift) nếu là tín hiệu baseband
+    if fc ~= 0
+        y_out = y_resampled .* exp(-1i * 2 * pi * fc * a_try * t_orig);
+    else
+        y_out = y_resampled;
+    end
 end
