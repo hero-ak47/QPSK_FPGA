@@ -1,8 +1,8 @@
 %% XUẤT HỆ SỐ FIR RA FILE .COE CHO IP FIR COMPILER (VIVADO)
 % Dùng đúng thông số hệ thống của bộ thu/phát: Fs=48000, Fc=8000, Rs=200
 
-Fs = 48000;
-Fc = 8000;
+Fs = 96000;
+Fc = 12000;
 Rb = 400;
 Rs = Rb/2;      % 200 baud
 L  = Fs/Rs;     % 240 samples/symbol
@@ -15,8 +15,8 @@ COEF_WIDTH = 16;   % số bit lượng tử hóa hệ số, chỉnh theo cấu h
 %% 1. BỘ LỌC BANDPASS (FIR thay cho IIR butter, vì FIR Compiler cần hệ số FIR)
 % Băng thông cần giữ lại quanh Fc: (1+beta)*Rs/2 mỗi bên ~ 150 Hz,
 % chọn biên rộng hơn 1 chút để an toàn: +-1500 Hz quanh Fc = [6500 9500] Hz
-f_low  = 6500;
-f_high = 9500;
+f_low  = Fc - 1000;
+f_high = Fc + 1000;
 
 N_bp = 200;  % bậc bộ lọc (order), tăng lên nếu cần dải chuyển tiếp hẹp hơn / suy hao mạnh hơn
 h_bp = fir1(N_bp, [f_low f_high]/(Fs/2), 'bandpass', kaiser(N_bp+1, 6));
